@@ -1,7 +1,32 @@
-import "server-only";
-import path from "path";
-import { FOLDERS, writeProjectFile } from "./projects";
-import type { Project } from "./types";
+import { FOLDERS } from "./types";
+import type { FootageCandidate, Project } from "./types";
+
+/** Turn a project title into a folder name that is valid on Windows, macOS and Linux. */
+export function folderNameFromTitle(title: string): string {
+  const name = title
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^\.+/, "")
+    .replace(/[. ]+$/, "")
+    .slice(0, 100);
+  return name || "Untitled project";
+}
+
+export function slugify(text: string): string {
+  return (
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40) || "clip"
+  );
+}
+
+export function clipRelativePath(c: FootageCandidate): string {
+  const folder = `${String(c.keywordIndex + 1).padStart(2, "0")}_${slugify(c.keyword)}`;
+  return `${FOLDERS.footage}/${folder}/${c.provider}_${c.id}.mp4`;
+}
 
 function csvCell(value: string | number): string {
   const s = String(value);
@@ -19,7 +44,7 @@ function readme(p: Project): string {
   lines.push(p.title, "=".repeat(p.title.length), "");
   lines.push(`Aspect ratio: ${p.aspect}`);
   if (p.voiceover) {
-    lines.push(`Voiceover: ${formatDuration(p.voiceover.durationSec)} (${p.voiceover.voice})`);
+    lines.push(`Voiceover: ${formatDuration(p.voiceover.durationSec)} (${p.voiceover.voiceLabel})`);
   }
   lines.push(`Footage clips: ${p.footage.downloads.length}`, `Updated: ${p.updatedAt}`, "");
 
@@ -58,21 +83,21 @@ function readme(p: Project): string {
   return lines.join("\n");
 }
 
-/** (Re)write the human-facing files editors open: script, keywords, credits and README. */
-export async function writeEditorFiles(p: Project): Promise<void> {
-  await writeProjectFile(p.id, path.posix.join(FOLDERS.script, "script.txt"), p.script.trim() + "\n");
-  await writeProjectFile(
-    p.id,
-    path.posix.join(FOLDERS.keywords, "keywords.txt"),
-    p.keywords.map((k, i) => `${String(i + 1).padStart(2, "0")}  ${k}`).join("\n") + "\n",
-  );
+/** The human-facing files editors open, keyed by path inside the project folder. */
+export function editorFiles(p: Project): Record<string, string> {
+  const files: Record<string, string> = {
+    [`${FOLDERS.script}/script.txt`]: p.script.trim() + "\n",
+    [`${FOLDERS.keywords}/keywords.txt`]:
+      p.keywords.map((k, i) => `${String(i + 1).padStart(2, "0")}  ${k}`).join("\n") + "\n",
+    "README.txt": readme(p),
+  };
   if (p.footage.downloads.length) {
     const rows = [
       ["file", "keyword", "provider", "source_page", "creator", "creator_page", "duration_sec", "width", "height"],
       ...[...p.footage.downloads]
         .sort((a, b) => a.file.localeCompare(b.file))
         .map((d) => [
-          path.posix.relative(FOLDERS.footage, d.file),
+          d.file.slice(FOLDERS.footage.length + 1),
           d.keyword,
           d.provider,
           d.pageUrl,
@@ -83,11 +108,7 @@ export async function writeEditorFiles(p: Project): Promise<void> {
           d.height,
         ]),
     ];
-    await writeProjectFile(
-      p.id,
-      path.posix.join(FOLDERS.footage, "credits.csv"),
-      rows.map((r) => r.map(csvCell).join(",")).join("\n") + "\n",
-    );
+    files[`${FOLDERS.footage}/credits.csv`] = rows.map((r) => r.map(csvCell).join(",")).join("\n") + "\n";
   }
-  await writeProjectFile(p.id, "README.txt", readme(p));
+  return files;
 }

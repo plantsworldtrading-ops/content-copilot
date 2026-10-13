@@ -3,8 +3,8 @@ import { promises as fs } from "fs";
 import os from "os";
 import path from "path";
 import { MsEdgeTTS, OUTPUT_FORMAT } from "msedge-tts";
-import { HttpError } from "./projects";
-import type { WordTiming } from "./types";
+import { HttpError } from "./http";
+import type { WordTiming } from "../types";
 
 // 48 kbit/s constant bitrate, so duration = bytes * 8 / 48000.
 const FORMAT = OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3;

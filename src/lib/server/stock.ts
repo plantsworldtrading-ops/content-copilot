@@ -1,11 +1,6 @@
 import "server-only";
-import { createWriteStream, promises as fs } from "fs";
-import path from "path";
-import { Readable } from "stream";
-import { pipeline } from "stream/promises";
-import type { ReadableStream as WebReadableStream } from "stream/web";
-import { FOLDERS, HttpError, projectPath } from "./projects";
-import type { Aspect, FootageCandidate, FootageQuality, Settings } from "./types";
+import { HttpError } from "./http";
+import type { Aspect, FootageCandidate, FootageQuality, StockSettings } from "../types";
 
 const SHORT_SIDE: Record<FootageQuality, number> = { "720p": 720, "1080p": 1080, "4k": 2160 };
 
@@ -42,7 +37,7 @@ async function searchPexels(
   keyword: string,
   keywordIndex: number,
   aspect: Aspect,
-  stock: Settings["stock"],
+  stock: StockSettings,
 ): Promise<FootageCandidate[]> {
   const params = new URLSearchParams({
     query: keyword,
@@ -96,7 +91,7 @@ async function searchPixabay(
   keyword: string,
   keywordIndex: number,
   aspect: Aspect,
-  stock: Settings["stock"],
+  stock: StockSettings,
 ): Promise<FootageCandidate[]> {
   const params = new URLSearchParams({
     key: stock.pixabayApiKey,
@@ -141,7 +136,7 @@ async function searchPixabay(
 export async function searchFootage(
   keywords: string[],
   aspect: Aspect,
-  stock: Settings["stock"],
+  stock: StockSettings,
 ): Promise<{ candidates: FootageCandidate[]; errors: string[] }> {
   const providers = stock.providers.filter((p) =>
     p === "pexels" ? stock.pexelsApiKey : stock.pixabayApiKey,
@@ -184,46 +179,4 @@ export async function searchFootage(
     }
   }
   return { candidates, errors };
-}
-
-export function slugify(text: string): string {
-  return (
-    text
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 40) || "clip"
-  );
-}
-
-export function clipRelativePath(c: FootageCandidate): string {
-  const folder = `${String(c.keywordIndex + 1).padStart(2, "0")}_${slugify(c.keyword)}`;
-  return path.posix.join(FOLDERS.footage, folder, `${c.provider}_${c.id}.mp4`);
-}
-
-const ALLOWED_HOSTS = [/(^|\.)pexels\.com$/, /(^|\.)pixabay\.com$/];
-
-export async function downloadClip(
-  projectId: string,
-  candidate: FootageCandidate,
-): Promise<{ file: string; bytes: number }> {
-  const url = new URL(candidate.downloadUrl);
-  if (url.protocol !== "https:" || !ALLOWED_HOSTS.some((re) => re.test(url.hostname))) {
-    throw new HttpError(400, "Refusing to download from an unexpected host");
-  }
-  const relative = clipRelativePath(candidate);
-  const full = await projectPath(projectId, relative);
-  await fs.mkdir(path.dirname(full), { recursive: true });
-
-  const res = await fetch(url, { redirect: "follow" });
-  if (!res.ok || !res.body) throw new HttpError(502, `Download failed (${res.status})`);
-  const tmp = `${full}.part`;
-  await pipeline(Readable.fromWeb(res.body as WebReadableStream), createWriteStream(tmp));
-  const { size } = await fs.stat(tmp);
-  if (size < 10_000) {
-    await fs.rm(tmp, { force: true });
-    throw new HttpError(502, "Downloaded file is too small to be a video");
-  }
-  await fs.rename(tmp, full);
-  return { file: relative, bytes: size };
 }

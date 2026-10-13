@@ -1,11 +1,15 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { api, projectUrl } from "@/lib/client";
+import { api } from "@/lib/client";
+import { downloadClip } from "@/lib/browser/footage";
+import { removeProjectFile } from "@/lib/browser/workspace";
 import type { FootageCandidate, Project, Settings } from "@/lib/types";
 import { Button, Card, ErrorNote } from "./ui";
 
 const CONCURRENCY = 3;
+
+type ClipState = "queued" | "error" | number; // number = download progress 0..1
 const CUT_SECONDS = 5;
 
 function ClipCard({
@@ -19,7 +23,7 @@ function ClipCard({
   clip: FootageCandidate;
   selected: boolean;
   downloaded: boolean;
-  state?: "queued" | "downloading" | "error";
+  state?: ClipState;
   onToggle: () => void;
   onRemove: () => void;
 }) {
@@ -76,9 +80,14 @@ function ClipCard({
           </button>
         )}
       </div>
-      {state && state !== "error" && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-xs font-medium text-white">
-          {state === "queued" ? "Queued" : "Downloading…"}
+      {state !== undefined && state !== "error" && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/50 text-xs font-medium text-white">
+          {state === "queued" ? "Queued" : `Downloading ${Math.round(state * 100)}%`}
+          {typeof state === "number" && (
+            <div className="h-1 w-3/4 overflow-hidden rounded bg-white/30">
+              <div className="h-full bg-white" style={{ width: `${Math.round(state * 100)}%` }} />
+            </div>
+          )}
         </div>
       )}
       {state === "error" && (
@@ -93,21 +102,23 @@ function ClipCard({
 export default function FootageStep({
   project,
   settings,
+  root,
   disabled,
   header,
   onBeforeSearch,
-  onProject,
+  commit,
 }: {
   project: Project;
   settings: Settings;
+  root: FileSystemDirectoryHandle;
   disabled: boolean;
   header: React.ReactNode;
   onBeforeSearch: () => Promise<Project>;
-  onProject: (p: Project) => void;
+  commit: (mutate: (p: Project) => void) => Promise<Project>;
 }) {
   const id = project.id;
   const [unselected, setUnselected] = useState<Set<string>>(new Set());
-  const [states, setStates] = useState<Record<string, "queued" | "downloading" | "error">>({});
+  const [states, setStates] = useState<Record<string, ClipState>>({});
   const [searching, setSearching] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -156,9 +167,14 @@ export default function FootageStep({
     setError(null);
     setWarnings([]);
     try {
-      await onBeforeSearch();
-      const res = await api<{ project: Project; errors: string[] }>(projectUrl(id, "/footage/search"), { body: {} });
-      onProject(res.project);
+      const p = await onBeforeSearch();
+      const res = await api<{ candidates: FootageCandidate[]; errors: string[] }>("/api/footage/search", {
+        body: { stock: settings.stock, keywords: p.keywords, aspect: p.aspect },
+      });
+      await commit((d) => {
+        d.footage.candidates = res.candidates;
+        d.footage.searchedAt = new Date().toISOString();
+      });
       setUnselected(new Set());
       setWarnings(res.errors);
     } catch (err) {
@@ -177,12 +193,15 @@ export default function FootageStep({
     const worker = async () => {
       for (let clip = queue.shift(); clip; clip = queue.shift()) {
         const key = clip.key;
-        setStates((s) => ({ ...s, [key]: "downloading" }));
+        setStates((s) => ({ ...s, [key]: 0 }));
         try {
-          const { project: p } = await api<{ project: Project }>(projectUrl(id, "/footage/download"), {
-            body: { key },
+          const downloaded = await downloadClip(root, id, clip, (fraction) =>
+            setStates((s) => ({ ...s, [key]: fraction })),
+          );
+          await commit((d) => {
+            d.footage.downloads = d.footage.downloads.filter((x) => x.key !== key);
+            d.footage.downloads.push(downloaded);
           });
-          onProject(p);
           setStates((s) => {
             const next = { ...s };
             delete next[key];
@@ -201,11 +220,11 @@ export default function FootageStep({
 
   async function remove(key: string) {
     try {
-      const { project: p } = await api<{ project: Project }>(projectUrl(id, "/footage/download"), {
-        method: "DELETE",
-        body: { key },
+      const file = project.footage.downloads.find((d) => d.key === key)?.file;
+      if (file) await removeProjectFile(root, id, file);
+      await commit((d) => {
+        d.footage.downloads = d.footage.downloads.filter((x) => x.key !== key);
       });
-      onProject(p);
       setUnselected((prev) => new Set(prev).add(key));
     } catch (err) {
       setError((err as Error).message);

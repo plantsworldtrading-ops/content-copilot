@@ -1,6 +1,6 @@
 import "server-only";
-import { readSettings } from "./settings";
-import { HttpError } from "./projects";
+import { HttpError } from "./http";
+import type { LlmSettings } from "../types";
 
 const RETRYABLE = new Set([429, 500, 502, 503, 504]);
 
@@ -14,8 +14,7 @@ async function fetchWithRetry(url: string, init: RequestInit, attempts = 3): Pro
   }
 }
 
-async function complete(system: string, prompt: string): Promise<string> {
-  const { llm } = await readSettings();
+async function complete(llm: LlmSettings, system: string, prompt: string): Promise<string> {
 
   if (llm.provider === "gemini") {
     if (!llm.gemini.apiKey) throw new HttpError(400, "Add a Gemini API key in Settings first");
@@ -67,7 +66,7 @@ async function complete(system: string, prompt: string): Promise<string> {
   return text;
 }
 
-export async function generateScript(opts: {
+export async function generateScript(llm: LlmSettings, opts: {
   title: string;
   topic: string;
   language: string;
@@ -85,10 +84,10 @@ export async function generateScript(opts: {
     `Length: about ${words} words (${opts.targetSeconds} seconds spoken).`,
     "Open with a hook in the first sentence, keep sentences short and concrete, end with a clear call to action.",
   ].join("\n");
-  return (await complete(system, prompt)).replace(/^```\w*\n?|```$/g, "").trim();
+  return (await complete(llm, system, prompt)).replace(/^```\w*\n?|```$/g, "").trim();
 }
 
-export async function generateKeywords(script: string, count: number): Promise<string[]> {
+export async function generateKeywords(llm: LlmSettings, script: string, count: number): Promise<string[]> {
   const system =
     "You choose search terms for stock-footage sites like Pexels and Pixabay. " +
     "Respond with a JSON array of strings only.";
@@ -102,7 +101,7 @@ export async function generateKeywords(script: string, count: number): Promise<s
     "Narration:",
     script,
   ].join("\n");
-  const raw = await complete(system, prompt);
+  const raw = await complete(llm, system, prompt);
   const match = raw.match(/\[[\s\S]*\]/);
   let terms: unknown = [];
   try {

@@ -1,5 +1,13 @@
 import "server-only";
-import { HttpError } from "./projects";
+
+export class HttpError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
 
 /** Run a route handler body and turn thrown errors into JSON responses. */
 export async function handle(fn: () => Promise<unknown>): Promise<Response> {

@@ -1,31 +1,52 @@
 export type Aspect = "9:16" | "16:9" | "1:1";
 export type StockProvider = "pexels" | "pixabay";
 export type FootageQuality = "720p" | "1080p" | "4k";
+export type VoiceProvider = "edge" | "elevenlabs";
 
+export interface LlmSettings {
+  provider: "gemini" | "openai";
+  gemini: { apiKey: string; model: string };
+  // Any OpenAI-compatible endpoint: OpenAI, Groq, OpenRouter, Ollama, ...
+  openai: { apiKey: string; baseUrl: string; model: string };
+}
+
+export interface StockSettings {
+  pexelsApiKey: string;
+  pixabayApiKey: string;
+  providers: StockProvider[];
+  clipsPerKeyword: number;
+  minClipSeconds: number;
+  quality: FootageQuality;
+}
+
+export interface ElevenLabsSettings {
+  apiKey: string;
+  model: string;
+  voiceId: string;
+  voiceName: string;
+  stability: number;
+  similarity: number;
+  speed: number;
+}
+
+export interface VoiceSettings {
+  provider: VoiceProvider;
+  edgeVoice: string;
+  ratePercent: number;
+  pitchHz: number;
+  elevenlabs: ElevenLabsSettings;
+}
+
+/** Lives in each editor's browser (localStorage); shared via an encrypted team code. */
 export interface Settings {
-  projectsDir: string;
-  llm: {
-    provider: "gemini" | "openai";
-    gemini: { apiKey: string; model: string };
-    // Any OpenAI-compatible endpoint: OpenAI, Groq, OpenRouter, Ollama, ...
-    openai: { apiKey: string; baseUrl: string; model: string };
-  };
-  stock: {
-    pexelsApiKey: string;
-    pixabayApiKey: string;
-    providers: StockProvider[];
-    clipsPerKeyword: number;
-    minClipSeconds: number;
-    quality: FootageQuality;
-  };
+  llm: LlmSettings;
+  stock: StockSettings;
+  voice: VoiceSettings;
   defaults: {
     aspect: Aspect;
     language: string;
     targetSeconds: number;
     keywordCount: number;
-    voice: string;
-    ratePercent: number;
-    pitchHz: number;
     charsPerLine: number;
     linesPerCue: number;
     maxCueSeconds: number;
@@ -61,8 +82,14 @@ export interface WordTiming {
   end: number;
 }
 
+export interface VoiceoverResult {
+  audioBase64: string;
+  words: WordTiming[];
+  durationSec: number;
+}
+
 export interface Project {
-  version: 1;
+  version: 2;
   id: string; // folder name
   title: string;
   createdAt: string;
@@ -79,9 +106,9 @@ export interface Project {
     downloads: DownloadedClip[];
   };
   voiceover?: {
+    provider: VoiceProvider;
     voice: string;
-    ratePercent: number;
-    pitchHz: number;
+    voiceLabel: string;
     file: string;
     durationSec: number;
     generatedAt: string;
@@ -111,3 +138,13 @@ export interface StepStatus {
   voiceover: boolean;
   subtitles: boolean;
 }
+
+export const FOLDERS = {
+  script: "01_script",
+  keywords: "02_keywords",
+  footage: "03_footage",
+  voiceover: "04_voiceover",
+  subtitles: "05_subtitles",
+} as const;
+
+export const STATE_DIR = ".copilot";

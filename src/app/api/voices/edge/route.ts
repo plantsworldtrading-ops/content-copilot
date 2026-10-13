@@ -1,6 +1,6 @@
 import { connection } from "next/server";
-import { handle } from "@/lib/http";
-import { listVoices } from "@/lib/tts";
+import { handle } from "@/lib/server/http";
+import { listVoices } from "@/lib/server/edge-tts";
 
 export async function GET() {
   await connection();

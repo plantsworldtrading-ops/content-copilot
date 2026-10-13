@@ -1,84 +1,161 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { api } from "@/lib/client";
+import { useState } from "react";
+import { createTeamCode, readTeamCode } from "@/lib/browser/settings";
 import type { Settings, StockProvider } from "@/lib/types";
+import { useSettings } from "./AppProviders";
+import ElevenLabsVoicePicker from "./ElevenLabsVoicePicker";
 import { Button, Card, ErrorNote, Field, inputClass } from "./ui";
 
-function SecretInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const saved = value.startsWith("••••");
+function SecretInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
+  const [show, setShow] = useState(false);
   return (
     <div className="flex gap-2">
       <input
-        type="password"
+        type={show ? "text" : "password"}
         autoComplete="off"
-        className={inputClass}
-        placeholder={saved ? `Saved (${value})` : "Paste key"}
-        value={saved ? "" : value}
-        onChange={(e) => onChange(e.target.value)}
+        spellCheck={false}
+        className={`${inputClass} font-mono`}
+        placeholder={placeholder ?? "Paste key"}
+        value={value}
+        onChange={(e) => onChange(e.target.value.trim())}
       />
-      {saved && (
-        <Button type="button" variant="secondary" onClick={() => onChange("")}>
-          Clear
-        </Button>
-      )}
+      <Button type="button" variant="secondary" onClick={() => setShow((s) => !s)} className="w-16">
+        {show ? "Hide" : "Show"}
+      </Button>
     </div>
   );
 }
 
-export default function SettingsForm() {
-  const [s, setS] = useState<Settings | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+function TeamCode({ settings, onImport }: { settings: Settings; onImport: (s: Settings) => void }) {
+  const [passcode, setPasscode] = useState("");
+  const [code, setCode] = useState("");
+  const [incoming, setIncoming] = useState("");
+  const [incomingPass, setIncomingPass] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    api<Settings>("/api/settings")
-      .then(setS)
-      .catch((e) => setError(e.message));
-  }, []);
+  async function make() {
+    setError(null);
+    setMessage(null);
+    setBusy(true);
+    try {
+      const c = await createTeamCode(settings, passcode);
+      setCode(c);
+      await navigator.clipboard.writeText(c).then(
+        () => setMessage("Team code copied. Send it to editors, and tell them the passcode separately."),
+        () => setMessage("Team code created. Copy it below."),
+      );
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
 
-  if (!s) return error ? <ErrorNote message={error} /> : <p className="text-fg-soft">Loading settings…</p>;
+  async function join() {
+    setError(null);
+    setMessage(null);
+    setBusy(true);
+    try {
+      const s = await readTeamCode(incoming, incomingPass);
+      if (!confirm("Replace all settings in this browser with the team settings?")) return;
+      onImport(s);
+      setIncoming("");
+      setIncomingPass("");
+      setMessage("Team settings loaded.");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
 
-  // Small immutable updater: update((d) => { d.stock.clipsPerKeyword = 4 })
+  return (
+    <Card>
+      <h2 className="font-semibold">Team setup code</h2>
+      <p className="mt-1 text-sm text-fg-soft">
+        Set up keys once, then share them: the code is your settings encrypted with a passcode. Editors paste it here
+        and they&apos;re ready to go.
+      </p>
+      <div className="mt-4 grid gap-6 md:grid-cols-2">
+        <div className="flex flex-col gap-3">
+          <h3 className="text-sm font-medium">Share these settings</h3>
+          <p className="-mt-2 text-xs text-fg-soft">Uses the last saved settings, so click Save settings first.</p>
+          <Field label="Passcode (at least 6 characters)">
+            <input
+              type="password"
+              className={inputClass}
+              value={passcode}
+              onChange={(e) => setPasscode(e.target.value)}
+              autoComplete="new-password"
+            />
+          </Field>
+          <Button type="button" variant="secondary" busy={busy} disabled={passcode.length < 6} onClick={make}>
+            Create & copy team code
+          </Button>
+          {code && (
+            <textarea readOnly className={`${inputClass} h-20 font-mono text-xs`} value={code} onFocus={(e) => e.target.select()} />
+          )}
+        </div>
+        <div className="flex flex-col gap-3">
+          <h3 className="text-sm font-medium">Join with a team code</h3>
+          <Field label="Team code">
+            <textarea
+              className={`${inputClass} h-20 font-mono text-xs`}
+              value={incoming}
+              onChange={(e) => setIncoming(e.target.value)}
+              placeholder="CCTEAM1:…"
+            />
+          </Field>
+          <Field label="Passcode">
+            <input
+              type="password"
+              className={inputClass}
+              value={incomingPass}
+              onChange={(e) => setIncomingPass(e.target.value)}
+              autoComplete="off"
+            />
+          </Field>
+          <Button type="button" busy={busy} disabled={!incoming.trim() || !incomingPass} onClick={join}>
+            Load team settings
+          </Button>
+        </div>
+      </div>
+      <div className="mt-3 flex flex-col gap-2">
+        {message && <p className="text-sm text-ok">{message}</p>}
+        <ErrorNote message={error} />
+      </div>
+    </Card>
+  );
+}
+
+function Form({ initial, onSave }: { initial: Settings; onSave: (s: Settings) => void }) {
+  const [s, setS] = useState<Settings>(initial);
+  const [saved, setSaved] = useState(false);
+
   const update = (fn: (draft: Settings) => void) => {
     const next = structuredClone(s);
     fn(next);
     setS(next);
     setSaved(false);
   };
-
+  const num = (v: string) => (v === "" ? 0 : Number(v));
   const toggleProvider = (p: StockProvider, on: boolean) =>
     update((d) => {
       d.stock.providers = on ? [...new Set([...d.stock.providers, p])] : d.stock.providers.filter((x) => x !== p);
     });
 
-  async function save(e: React.FormEvent) {
-    e.preventDefault();
-    setSaving(true);
-    setError(null);
-    try {
-      setS(await api<Settings>("/api/settings", { method: "PUT", body: s }));
-      setSaved(true);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  const num = (v: string) => (v === "" ? 0 : Number(v));
-
   return (
-    <form onSubmit={save} className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-xl font-semibold">Settings</h1>
-        <p className="mt-1 text-sm text-fg-soft">
-          Keys are stored on this machine in <code className="font-mono">data/settings.json</code> and never sent to
-          the browser in full.
-        </p>
-      </div>
-
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSave(s);
+        setSaved(true);
+      }}
+      className="flex flex-col gap-6"
+    >
       <Card>
         <h2 className="font-semibold">Script & keyword AI</h2>
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -89,17 +166,14 @@ export default function SettingsForm() {
               onChange={(e) => update((d) => void (d.llm.provider = e.target.value as Settings["llm"]["provider"]))}
             >
               <option value="gemini">Google Gemini</option>
-              <option value="openai">OpenAI-compatible (OpenAI, Groq, OpenRouter, Ollama…)</option>
+              <option value="openai">OpenAI-compatible (OpenAI, Groq, OpenRouter…)</option>
             </select>
           </Field>
-          <div />
+          <div className="hidden sm:block" />
           {s.llm.provider === "gemini" ? (
             <>
               <Field label="Gemini API key" hint="Free key at aistudio.google.com/app/apikey">
-                <SecretInput
-                  value={s.llm.gemini.apiKey}
-                  onChange={(v) => update((d) => void (d.llm.gemini.apiKey = v))}
-                />
+                <SecretInput value={s.llm.gemini.apiKey} onChange={(v) => update((d) => void (d.llm.gemini.apiKey = v))} />
               </Field>
               <Field label="Model">
                 <input
@@ -111,7 +185,7 @@ export default function SettingsForm() {
             </>
           ) : (
             <>
-              <Field label="Base URL" hint="e.g. https://api.groq.com/openai/v1 or http://localhost:11434/v1">
+              <Field label="Base URL" hint="e.g. https://api.groq.com/openai/v1">
                 <input
                   className={inputClass}
                   value={s.llm.openai.baseUrl}
@@ -125,11 +199,8 @@ export default function SettingsForm() {
                   onChange={(e) => update((d) => void (d.llm.openai.model = e.target.value))}
                 />
               </Field>
-              <Field label="API key" hint="Leave empty for a local Ollama server">
-                <SecretInput
-                  value={s.llm.openai.apiKey}
-                  onChange={(v) => update((d) => void (d.llm.openai.apiKey = v))}
-                />
+              <Field label="API key">
+                <SecretInput value={s.llm.openai.apiKey} onChange={(v) => update((d) => void (d.llm.openai.apiKey = v))} />
               </Field>
             </>
           )}
@@ -140,26 +211,16 @@ export default function SettingsForm() {
         <h2 className="font-semibold">Stock footage</h2>
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
           <Field label="Pexels API key" hint="Free at pexels.com/api">
-            <SecretInput
-              value={s.stock.pexelsApiKey}
-              onChange={(v) => update((d) => void (d.stock.pexelsApiKey = v))}
-            />
+            <SecretInput value={s.stock.pexelsApiKey} onChange={(v) => update((d) => void (d.stock.pexelsApiKey = v))} />
           </Field>
           <Field label="Pixabay API key" hint="Free at pixabay.com/api/docs">
-            <SecretInput
-              value={s.stock.pixabayApiKey}
-              onChange={(v) => update((d) => void (d.stock.pixabayApiKey = v))}
-            />
+            <SecretInput value={s.stock.pixabayApiKey} onChange={(v) => update((d) => void (d.stock.pixabayApiKey = v))} />
           </Field>
           <fieldset className="flex flex-col gap-1.5 text-sm">
             <legend className="mb-1.5 font-medium">Search on</legend>
             {(["pexels", "pixabay"] as StockProvider[]).map((p) => (
               <label key={p} className="flex items-center gap-2 capitalize">
-                <input
-                  type="checkbox"
-                  checked={s.stock.providers.includes(p)}
-                  onChange={(e) => toggleProvider(p, e.target.checked)}
-                />
+                <input type="checkbox" checked={s.stock.providers.includes(p)} onChange={(e) => toggleProvider(p, e.target.checked)} />
                 {p}
               </label>
             ))}
@@ -195,6 +256,59 @@ export default function SettingsForm() {
               onChange={(e) => update((d) => void (d.stock.minClipSeconds = num(e.target.value)))}
             />
           </Field>
+        </div>
+      </Card>
+
+      <Card>
+        <h2 className="font-semibold">Voiceover</h2>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <Field label="Default voice service">
+            <select
+              className={inputClass}
+              value={s.voice.provider}
+              onChange={(e) => update((d) => void (d.voice.provider = e.target.value as Settings["voice"]["provider"]))}
+            >
+              <option value="edge">Microsoft Edge voices (free, for drafts)</option>
+              <option value="elevenlabs">ElevenLabs (best quality)</option>
+            </select>
+          </Field>
+          <div className="hidden sm:block" />
+          <Field
+            label="ElevenLabs API key"
+            hint={
+              <>
+                elevenlabs.io → Developers → API keys. The free plan is for testing only: it isn&apos;t licensed for
+                commercial videos. Starter or higher is.
+              </>
+            }
+          >
+            <SecretInput
+              value={s.voice.elevenlabs.apiKey}
+              onChange={(v) => update((d) => void (d.voice.elevenlabs.apiKey = v))}
+            />
+          </Field>
+          <Field label="ElevenLabs model">
+            <select
+              className={inputClass}
+              value={s.voice.elevenlabs.model}
+              onChange={(e) => update((d) => void (d.voice.elevenlabs.model = e.target.value))}
+            >
+              <option value="eleven_multilingual_v2">Multilingual v2 (most natural)</option>
+              <option value="eleven_flash_v2_5">Flash v2.5 (half the credits, slightly less natural)</option>
+            </select>
+          </Field>
+          <div className="sm:col-span-2">
+            <ElevenLabsVoicePicker
+              apiKey={s.voice.elevenlabs.apiKey}
+              voiceId={s.voice.elevenlabs.voiceId}
+              onPick={(id, name) =>
+                update((d) => {
+                  d.voice.elevenlabs.voiceId = id;
+                  d.voice.elevenlabs.voiceName = name;
+                })
+              }
+            />
+          </div>
         </div>
       </Card>
 
@@ -239,13 +353,6 @@ export default function SettingsForm() {
               onChange={(e) => update((d) => void (d.defaults.keywordCount = num(e.target.value)))}
             />
           </Field>
-          <Field label="Voice" hint="Edge voice name, e.g. en-US-AndrewNeural">
-            <input
-              className={inputClass}
-              value={s.defaults.voice}
-              onChange={(e) => update((d) => void (d.defaults.voice = e.target.value))}
-            />
-          </Field>
           <Field label="Subtitle characters per line">
             <input
               type="number"
@@ -259,26 +366,36 @@ export default function SettingsForm() {
         </div>
       </Card>
 
-      <Card>
-        <h2 className="font-semibold">Storage</h2>
-        <div className="mt-4">
-          <Field label="Projects folder" hint="Each project gets a sub-folder named after its title.">
-            <input
-              className={`${inputClass} font-mono`}
-              value={s.projectsDir}
-              onChange={(e) => update((d) => void (d.projectsDir = e.target.value))}
-            />
-          </Field>
-        </div>
-      </Card>
-
-      <div className="flex items-center gap-3">
-        <Button type="submit" busy={saving}>
-          Save settings
-        </Button>
-        {saved && <span className="text-sm text-ok">Saved</span>}
+      <div className="sticky bottom-0 -mx-4 flex items-center gap-3 border-t border-line bg-background/95 px-4 py-3 backdrop-blur sm:mx-0 sm:rounded-lg sm:border">
+        <Button type="submit">Save settings</Button>
+        {saved && <span className="text-sm text-ok">Saved in this browser</span>}
       </div>
-      <ErrorNote message={error} />
     </form>
+  );
+}
+
+export default function SettingsForm() {
+  const [settings, setSettings] = useSettings();
+  // Re-mount the form when settings are replaced from outside (team code, another tab).
+  const [version, setVersion] = useState(0);
+  if (!settings) return <p className="text-fg-soft">Loading settings…</p>;
+  return (
+    <div className="flex flex-col gap-6">
+      <div>
+        <h1 className="text-xl font-semibold">Settings</h1>
+        <p className="mt-1 text-sm text-fg-soft">
+          Saved only in this browser. Keys are sent to the app&apos;s server just to make each request, and are never
+          stored there.
+        </p>
+      </div>
+      <TeamCode
+        settings={settings}
+        onImport={(s) => {
+          setSettings(s);
+          setVersion((v) => v + 1);
+        }}
+      />
+      <Form key={version} initial={settings} onSave={setSettings} />
+    </div>
   );
 }
