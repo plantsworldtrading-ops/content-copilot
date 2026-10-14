@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "client-zip": "^2.5.1",
-    "msedge-tts": "^2.0.9",
+    "msedge-tts": "^2.1.0",
     "next": "16.4.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
